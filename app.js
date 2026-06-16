@@ -21,23 +21,163 @@ const SLOTS = ['Breakfast','Nap','Dinner','Bath','Bed'];
 const SLOT_ICON = ['🥣','😴','🍽️','🛁','🌙'];
 const READY_WINDOW = 10, READY_PASS = 8, SPACING_DAYS = 14;
 
-/* ---------- Storage layer (swap-in point for sync) ---------- */
-const Store = {
-  KEY: 'lev_eguchi_v1',
-  load() {
+/* ============================================================
+   Storage = append-only EVENT LOG (merges cleanly across phones)
+   - state.events: session/test events, each with a unique id
+   - state.added : map cardId -> first-unlocked date (drives unlocked)
+   - user / speak: per-device prefs, never synced
+   Derived for the UI: state.sessions, state.tests, state.unlocked
+   Firestore (when configured) syncs events + added; the union of
+   two devices' logs is the same on both, so no double counting.
+   ============================================================ */
+const KEY = 'lev_eguchi_v1';
+const EVENT_CAP = 1200;
+let deviceId = localStorage.getItem('lev_device') ||
+  (localStorage.setItem('lev_device', 'd' + Date.now().toString(36) +
+    Math.floor(Math.random() * 1e6).toString(36)), localStorage.getItem('lev_device'));
+const uid = () => deviceId + '-' + Date.now().toString(36) + '-' +
+  Math.floor(Math.random() * 1e9).toString(36);
+
+function freshState() {
+  const today = todayStr();
+  return { user: 'Amit', speak: false, events: [],
+           added: { apple: today, banana: today },
+           sessions: [], tests: [], unlocked: [] };
+}
+function loadState() {
+  let s;
+  try { s = JSON.parse(localStorage.getItem(KEY)); } catch (e) {}
+  if (!s) return freshState();
+  // migrate v1 (sessions/tests arrays) -> event log
+  if (!s.events) {
+    s.events = [];
+    (s.sessions || []).forEach(x => s.events.push({ kind: 'session', id: uid(),
+      date: x.date, user: x.user, type: x.type, ts: x.ts || Date.now() }));
+    (s.tests || []).forEach(x => s.events.push({ kind: 'test', id: uid(),
+      date: x.date, user: x.user, cardId: x.cardId, correct: x.correct, ts: x.ts || Date.now() }));
+  }
+  if (!s.added) s.added = { apple: todayStr(), banana: todayStr() };
+  if (!s.user) s.user = 'Amit';
+  return s;
+}
+let state = loadState();
+
+function recompute() {
+  const ev = state.events;
+  state.sessions = ev.filter(e => e.kind === 'session')
+    .map(e => ({ id: e.id, date: e.date, user: e.user, type: e.type, ts: e.ts }))
+    .sort((a, b) => a.ts - b.ts);
+  state.tests = ev.filter(e => e.kind === 'test')
+    .map(e => ({ id: e.id, date: e.date, user: e.user, cardId: e.cardId, correct: e.correct, ts: e.ts }))
+    .sort((a, b) => a.ts - b.ts);
+  state.unlocked = CARDS.map(c => c.id).filter(id => state.added[id]);
+}
+function persist() {
+  // keep all unlock info (in `added`) but cap the event log to recent activity
+  if (state.events.length > EVENT_CAP + 200)
+    state.events = state.events.slice(-EVENT_CAP);
+  localStorage.setItem(KEY, JSON.stringify({
+    user: state.user, speak: state.speak, events: state.events, added: state.added }));
+}
+
+/* Create a logged event (session/test). Persists locally + pushes to sync. */
+function addEvent(ev) {
+  ev.id = ev.id || uid();
+  ev.ts = ev.ts || Date.now();
+  state.events.push(ev);
+  recompute(); persist();
+  Sync.writeEvent(ev);
+}
+function unlockCard(id) {
+  if (state.added[id]) return;
+  state.added[id] = todayStr();
+  recompute(); persist();
+  Sync.writeAdded(id, state.added[id]);
+}
+function removeCardLocal(id) {
+  delete state.added[id];
+  recompute(); persist();
+  Sync.removeAdded(id);
+}
+recompute();
+
+/* Re-render whatever screen is open (used when remote data arrives) */
+function currentScreen() {
+  const s = document.querySelector('.screen:not(.hidden)');
+  return s ? s.id.replace('screen-', '') : 'home';
+}
+function refreshCurrentScreen() {
+  const n = currentScreen();
+  if (n === 'home') renderHome();
+  else if (n === 'progress') renderProgress();
+  else if (n === 'settings') renderSettings();
+  else if (n === 'test') updateTestScore();
+}
+
+/* ============================================================
+   Sync layer — Firestore. Inert until sync-config.js has an apiKey.
+   ============================================================ */
+const Sync = {
+  enabled: false, status: 'local', db: null, famRef: null, evRef: null,
+  cfg: (window.SYNC_CONFIG || {}),
+  async init() {
+    const fb = this.cfg.firebase;
+    if (!fb || !fb.apiKey || !window.firebase) { this.setStatus('local'); return; }
     try {
-      const s = JSON.parse(localStorage.getItem(this.KEY));
-      if (s && s.unlocked) return s;
-    } catch (e) {}
-    const today = todayStr();
-    return { user:'Amit', unlocked:['apple','banana'],
-             added:{apple:today, banana:today},
-             sessions:[], tests:[], speak:false };
+      firebase.initializeApp(fb);
+      this.db = firebase.firestore();
+      try { await this.db.enablePersistence({ synchronizeTabs: true }); } catch (e) {}
+      this.famRef = this.db.collection('families').doc(this.cfg.familyId);
+      this.evRef = this.famRef.collection('events');
+      this.enabled = true; this.setStatus('connecting');
+      await this.backfill();                       // upload anything local-only
+      this.famRef.onSnapshot(snap => {             // shared "added" map
+        const d = snap.data() || {};
+        this.setStatus(snap.metadata.fromCache ? 'offline' : 'live');
+        if (d.added) {
+          let changed = false;
+          Object.keys(d.added).forEach(id => {
+            if (!state.added[id] || d.added[id] < state.added[id]) { state.added[id] = d.added[id]; changed = true; }
+          });
+          if (changed) { recompute(); persist(); refreshCurrentScreen(); }
+        }
+      }, () => this.setStatus('offline'));
+      this.evRef.orderBy('ts', 'desc').limit(1500).onSnapshot(snap => {  // shared events
+        const have = new Set(state.events.map(e => e.id));
+        let changed = false;
+        snap.forEach(doc => {
+          const e = doc.data();
+          if (e && e.id && !have.has(e.id)) { state.events.push(e); have.add(e.id); changed = true; }
+        });
+        if (changed) { recompute(); persist(); refreshCurrentScreen(); }
+      }, () => {});
+    } catch (e) { this.enabled = false; this.setStatus('local'); }
   },
-  save(s) { localStorage.setItem(this.KEY, JSON.stringify(s)); },
+  async backfill() {
+    try {
+      state.events.forEach(e => this.evRef.doc(e.id).set(e));
+      const added = {};
+      Object.keys(state.added).forEach(id => added[id] = state.added[id]);
+      this.famRef.set({ added }, { merge: true });
+    } catch (e) {}
+  },
+  writeEvent(ev) { if (this.enabled) try { this.evRef.doc(ev.id).set(ev); } catch (e) {} },
+  writeAdded(id, date) { if (this.enabled) try { this.famRef.set({ added: { [id]: date } }, { merge: true }); } catch (e) {} },
+  removeAdded(id) {
+    if (this.enabled) try {
+      this.famRef.set({ added: { [id]: firebase.firestore.FieldValue.delete() } }, { merge: true });
+    } catch (e) {}
+  },
+  setStatus(s) { this.status = s; renderSyncBadge(); },
 };
-let state = Store.load();
-const persist = () => Store.save(state);
+function renderSyncBadge() {
+  const el = document.getElementById('syncBadge'); if (!el) return;
+  const map = { local: ['•', 'on this phone only'], connecting: ['◌', 'connecting…'],
+                live: ['☁︎', 'synced with Jonathan'], offline: ['⌁', 'offline · will sync'] };
+  const [icon, label] = map[Sync.status] || map.local;
+  el.textContent = `${icon} ${label}`;
+  el.className = 'sync-badge ' + Sync.status;
+}
 
 /* ---------- Date helpers ---------- */
 function todayStr() {
@@ -53,13 +193,36 @@ function sessionsToday() {
   return state.sessions.filter(s => s.date === t);
 }
 
-/* ---------- Audio (Web Audio, always in tune) ---------- */
-let actx = null;
+/* ---------- Audio (Web Audio, always in tune) ----------
+   iOS notes:
+   - Safari silences Web Audio when the side MUTE switch is on unless
+     we declare a "playback" audio session (Safari 16.4+).
+   - The context must be created + resumed inside a user gesture, and
+     "unlocked" by playing a silent buffer once.                       */
+let actx = null, audioUnlocked = false;
+function setPlaybackSession() {
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+}
 function ensureAudio() {
-  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+  if (!actx) {
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    setPlaybackSession();
+  }
   if (actx.state === 'suspended') actx.resume();
+  if (!audioUnlocked) {
+    // play a 1-sample silent buffer to flip iOS out of its muted state
+    try {
+      const buf = actx.createBuffer(1, 1, 22050);
+      const src = actx.createBufferSource();
+      src.buffer = buf; src.connect(actx.destination); src.start(0);
+      audioUnlocked = true;
+    } catch (e) {}
+  }
   return actx;
 }
+// Resume/unlock on the very first touch anywhere, so the first chord is never swallowed.
+['pointerdown', 'touchend', 'click'].forEach(evt =>
+  document.addEventListener(evt, () => { setPlaybackSession(); ensureAudio(); }, { passive: true }));
 function noteFreq(name) {
   const m = name.match(/^([A-G])(#?)(\d)$/);
   const semis = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
@@ -154,6 +317,7 @@ function renderHome() {
   }).join('');
   $$('#whoToggle button').forEach(b =>
     b.classList.toggle('active', b.dataset.user === state.user));
+  renderSyncBadge();
 }
 $('#whoToggle').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
@@ -215,8 +379,8 @@ $('#teachNext').addEventListener('click', () => {
 });
 function finishTeach(complete) {
   if (!teach.logged && teach.reveals >= (complete ? 1 : 8)) {
-    state.sessions.push({ date: todayStr(), user: state.user, type: 'teach', ts: Date.now() });
-    teach.logged = true; persist();
+    addEvent({ kind: 'session', date: todayStr(), user: state.user, type: 'teach' });
+    teach.logged = true;
     toast(`Teach session logged · ${sessionsToday().length}/5 today`);
   }
 }
@@ -247,9 +411,7 @@ $('#testChoices').addEventListener('click', e => {
   const b = e.target.closest('.choice'); if (!b || !test.current) return;
   const chosen = b.dataset.card;
   const correct = chosen === test.current;
-  state.tests.push({ date: todayStr(), user: state.user, cardId: test.current, correct, ts: Date.now() });
-  if (state.tests.length > 400) state.tests = state.tests.slice(-400);
-  persist();
+  addEvent({ kind: 'test', date: todayStr(), user: state.user, cardId: test.current, correct });
   test.total++; if (correct) test.correct++;
   // visual feedback
   b.classList.add(correct ? 'correct-flash' : 'wrong-flash');
@@ -263,8 +425,8 @@ $('#testChoices').addEventListener('click', e => {
 });
 function maybeLogTest() {
   if (!test.logged && test.total >= 5) {
-    state.sessions.push({ date: todayStr(), user: state.user, type: 'test', ts: Date.now() });
-    test.logged = true; persist();
+    addEvent({ kind: 'session', date: todayStr(), user: state.user, type: 'test' });
+    test.logged = true;
     toast(`Test session logged · ${sessionsToday().length}/5 today`);
   }
 }
@@ -332,9 +494,7 @@ $('#roadmap')?.addEventListener('click', e => {
 });
 function addCard(id) {
   if (state.unlocked.includes(id)) return;
-  state.unlocked.push(id);
-  state.added[id] = todayStr();
-  persist();
+  unlockCard(id);
   toast(`Added ${byId(id).he} (${byId(id).tr})`);
   renderProgress();
 }
@@ -355,23 +515,21 @@ $('#settingsCards').addEventListener('click', e => {
   const id = b.dataset.toggle;
   if (state.unlocked.includes(id)) {
     if (state.unlocked.length <= 1) { toast('Keep at least one card'); return; }
-    state.unlocked = state.unlocked.filter(x => x !== id);
+    removeCardLocal(id);
   } else {
-    state.unlocked.push(id);
-    state.added[id] = todayStr();
+    unlockCard(id);
   }
-  // keep introduction order
-  state.unlocked.sort((a, b2) => CARDS.findIndex(c => c.id === a) - CARDS.findIndex(c => c.id === b2));
-  persist(); renderSettings();
+  renderSettings();
 });
 $('#speakToggle').addEventListener('click', () => {
   state.speak = !state.speak; persist(); renderSettings();
   if (state.speak) speak('שלום');
 });
 $('#resetBtn').addEventListener('click', () => {
-  if (!confirm('Erase all sessions, test results, and progress on this device?')) return;
-  localStorage.removeItem(Store.KEY);
-  state = Store.load(); persist();
+  if (!confirm('Erase all sessions, test results, and progress on THIS device?' +
+    (Sync.enabled ? '\n\n(Sync is on — data still on the cloud/other phone will flow back. To wipe everything, reset on both phones.)' : ''))) return;
+  localStorage.removeItem(KEY);
+  state = freshState(); recompute(); persist();
   toast('Reset'); go('home');
 });
 
@@ -386,3 +544,4 @@ if ('serviceWorker' in navigator) {
 
 /* ---------- Boot ---------- */
 go('home');
+Sync.init();

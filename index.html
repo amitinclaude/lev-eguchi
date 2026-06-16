@@ -27,6 +27,7 @@
         </div>
         <h1>Lev · אגוצ׳י</h1>
         <p class="date" id="todayLabel"></p>
+        <div class="sync-badge local" id="syncBadge">• on this phone only</div>
       </header>
 
       <div class="sessions-card">
@@ -103,6 +104,10 @@
     </section>
   </div>
 
+  <!-- Firebase SDK (cross-phone sync). Cached by the service worker after first online load. -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="sync-config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -36,6 +36,11 @@ html, body {
 .home-head { text-align: center; }
 .home-head h1 { font-size: 1.9rem; margin: 10px 0 2px; letter-spacing: .5px; }
 .date { color: var(--muted); margin: 0 0 4px; font-size: .9rem; }
+.sync-badge { display: inline-block; font-size: .72rem; padding: 3px 10px; border-radius: 999px;
+  background: #2a2a48; color: var(--muted); margin-top: 2px; }
+.sync-badge.live { background: rgba(76,175,114,.18); color: #6fd49a; }
+.sync-badge.offline { background: rgba(240,164,74,.16); color: #f0a44a; }
+.sync-badge.connecting { color: var(--muted); }
 .who { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .who-label { color: var(--muted); font-size: .78rem; }
 .who-toggle { display: inline-flex; background: var(--bg2); border-radius: 999px; padding: 3px; }
