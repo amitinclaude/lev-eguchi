@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#14142b"/>
+  <circle cx="256" cy="200" r="120" fill="#e53935"/>
+  <text x="256" y="232" font-size="120" text-anchor="middle" dominant-baseline="middle">🍎</text>
+  <g fill="#f4f4fa">
+    <circle cx="176" cy="392" r="22"/>
+    <circle cx="256" cy="392" r="22"/>
+    <circle cx="336" cy="392" r="22"/>
+  </g>
+  <text x="256" y="470" font-size="48" font-family="sans-serif" font-weight="700"
+        text-anchor="middle" fill="#9a9ac0">♪ Lev</text>
+</svg>

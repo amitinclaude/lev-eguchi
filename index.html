@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#1a1a2e" />
+  <title>Lev · Eguchi</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Lev Eguchi" />
+  <link rel="apple-touch-icon" href="icon-180.png" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- ===== HOME ===== -->
+    <section class="screen" id="screen-home">
+      <header class="home-head">
+        <div class="who">
+          <span class="who-label">Running session:</span>
+          <div class="who-toggle" id="whoToggle">
+            <button data-user="Amit" class="active">Amit</button>
+            <button data-user="Jonathan">Jonathan</button>
+          </div>
+        </div>
+        <h1>Lev · אגוצ׳י</h1>
+        <p class="date" id="todayLabel"></p>
+      </header>
+
+      <div class="sessions-card">
+        <div class="sessions-count">
+          <span id="sessionDone">0</span><span class="of">/5</span>
+          <small>sessions today</small>
+        </div>
+        <div class="slots" id="slots"></div>
+      </div>
+
+      <div class="active-cards">
+        <span class="active-label">Today's cards</span>
+        <div class="active-list" id="activeCards"></div>
+      </div>
+
+      <div class="home-actions">
+        <button class="big-btn teach" data-go="teach">▶ Teach Session</button>
+        <button class="big-btn test" data-go="test">? Test Session<small>מה זה?</small></button>
+      </div>
+      <div class="home-sub">
+        <button data-go="progress" class="link-btn">Progress &amp; readiness →</button>
+        <button data-go="settings" class="link-btn">Settings</button>
+      </div>
+    </section>
+
+    <!-- ===== TEACH ===== -->
+    <section class="screen hidden" id="screen-teach">
+      <button class="back" data-go="home">‹ Done</button>
+      <div class="stage" id="teachStage">
+        <div class="card-display" id="teachCard"></div>
+      </div>
+      <div class="teach-controls">
+        <button id="teachPlay" class="ctl-play">♪ Play chord</button>
+        <button id="teachReveal" class="ctl-reveal">Reveal card</button>
+        <button id="teachNext" class="ctl-next">Next ›</button>
+      </div>
+      <p class="teach-hint" id="teachHint">Lev sits where he can hear but not see the keyboard.</p>
+      <div class="rep-count">Card <span id="teachRep">1</span></div>
+    </section>
+
+    <!-- ===== TEST ===== -->
+    <section class="screen hidden" id="screen-test">
+      <button class="back" data-go="home">‹ Done</button>
+      <div class="test-prompt">
+        <button id="testPlay" class="ctl-play big">♪ Play</button>
+        <p class="ask">מה זה? <small>What is it?</small></p>
+      </div>
+      <p class="test-instr">Wait for Lev to point or say. Then tap what he chose:</p>
+      <div class="choice-grid" id="testChoices"></div>
+      <div class="test-score">
+        Last 10: <strong id="testScore">–</strong>
+        &nbsp;·&nbsp; This session: <strong id="testSession">0/0</strong>
+      </div>
+    </section>
+
+    <!-- ===== PROGRESS ===== -->
+    <section class="screen hidden" id="screen-progress">
+      <button class="back" data-go="home">‹ Back</button>
+      <h2>Progress</h2>
+      <div class="readiness" id="readiness"></div>
+      <h3>Card roadmap</h3>
+      <div class="roadmap" id="roadmap"></div>
+    </section>
+
+    <!-- ===== SETTINGS ===== -->
+    <section class="screen hidden" id="screen-settings">
+      <button class="back" data-go="home">‹ Back</button>
+      <h2>Settings</h2>
+      <p class="settings-note">Unlocked cards (adults decide readiness — tap to toggle). June: apple + banana only.</p>
+      <div class="settings-cards" id="settingsCards"></div>
+      <button id="speakToggle" class="toggle-btn">Hebrew voice: on tap</button>
+      <button id="resetBtn" class="danger-btn">Reset all progress</button>
+      <p class="version">Lev Eguchi · local v1</p>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
